@@ -1,0 +1,170 @@
+service: stack-grafana
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: provided
+  stage: ${opt:stage,'dev'}
+  region: ap-northeast-1
+
+package:
+  patterns:
+    - ./**
+
+resources:
+  Resources:
+    GrafanaRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - ec2.amazonaws.com
+              Action: sts:AssumeRole
+        Path: /
+        Policies:
+          - PolicyName: grafana-policy
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Sid: AllowReadingMetricsFromCloudWatch
+                  Action:
+                    - cloudwatch:ListMetrics
+                    - cloudwatch:GetMetricStatistics
+                    - cloudwatch:GetMetricData
+                  Resource: *
+                - Effect: Allow
+                  Sid: AllowReadingTagsInstancesRegionsFromEC2
+                  Action:
+                    - ec2:DescribeTags
+                    - ec2:DescribeInstances
+                    - ec2:DescribeRegions
+                  Resource: *
+    GrafanaConnectToAWS:
+      Type: AWS::IAM::User
+      Properties:
+        UserName: !Sub '${AWS::StackName}-Grafana-Connect'
+        Groups:
+          - !Ref GrafanaGroup
+    IAMAccessKey:
+      Type: AWS::IAM::AccessKey
+      DependsOn: GrafanaConnectToAWS
+      Properties:
+        Status: Active
+        UserName: !Sub '${AWS::StackName}-Grafana-Connect'
+    GrafanaGroup:
+      Type: AWS::IAM::Group
+      Properties:
+        Policies:
+          - PolicyName: !Sub '${AWS::StackName}-Grafana-group'
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Sid: AllowReadingMetricsFromCloudWatch
+                  Action:
+                    - cloudwatch:ListMetrics
+                    - cloudwatch:GetMetricStatistics
+                    - cloudwatch:GetMetricData
+                  Resource: *
+    GrafanaEC2SecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for EC2 Grafana
+        VpcId: !Ref VPCId
+    GrafanaEC2SecurityGroupInboundHttp:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !Ref GrafanaEC2SecurityGroup
+        IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+    GrafanaEC2SecurityGroupInboundHttps:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !Ref GrafanaEC2SecurityGroup
+        IpProtocol: tcp
+        FromPort: 3000
+        ToPort: 3000
+        CidrIp: 0.0.0.0/0
+    GrafanaEC2SecurityGroupInboundSSH:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !Ref GrafanaEC2SecurityGroup
+        IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+    GrafanaInstance:
+      Type: AWS::EC2::Instance
+      Properties:
+        ImageId: !Ref ImageId
+        InstanceType: t2.micro
+        SubnetId: ${cf:stack-network-${self:provider.stage}.PublicSubnet1}
+        KeyName: !If
+          - HasNoKey
+          - !Ref 'AWS::NoValue'
+          - !Ref KeyPairName
+        SecurityGroupIds:
+          - !Ref GrafanaEC2SecurityGroup
+        UserData:
+          Fn::Base64:
+            Fn::Sub:
+              - |
+                #!/bin/bash -x
+                # Add a repository for grafana
+                cat > /etc/yum.repos.d/grafana.repo <<- EOF
+                [grafana]
+                name=grafana
+                baseurl=https://packages.grafana.com/oss/rpm
+                repo_gpgcheck=1
+                enabled=1
+                gpgcheck=1
+                gpgkey=https://packages.grafana.com/gpg.key
+                sslverify=1
+                sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+                EOF
+                
+                # Install grafana
+                yum install grafana -y
+
+                # Reload the system
+                systemctl daemon-reload
+
+                # Start grafana server
+                systemctl start grafana-server
+                systemctl status grafana-server
+
+                # This command will ensure that Grafana will start up automatically if we stop and restart our instance
+                systemctl enable grafana-server.service
+
+                # Add credentials
+                cat > /usr/share/grafana/.credentials <<- EOF
+                [default]
+                aws_access_key_id=${IAMAccessKey}
+                aws_secret_access_key=${SecretAccessKey}
+                region=${Region}
+                EOF
+
+                chmod 0644 /usr/share/grafana/.credentials
+              - SecretAccessKey: !GetAtt IAMAccessKey.SecretAccessKey
+                Region: !Ref 'AWS::Region'
+  Conditions:
+    HasNoKey: !Equals
+      - ''
+      - Ref: KeyPairName
+  Parameters:
+    ImageId:
+      Type: String
+      Default: ami-02af03988afacfca4
+    KeyPairName:
+      Type: String
+      Default: ''
+  Outputs:
+    SecretAccessKey:
+      Value: !GetAtt IAMAccessKey.SecretAccessKey

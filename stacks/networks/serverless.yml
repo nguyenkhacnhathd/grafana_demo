@@ -1,0 +1,142 @@
+service: stack-network
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: provided
+  stage: ${opt:stage,'dev'}
+  region: ap-northeast-1
+
+package:
+  patterns:
+    - ./**
+
+resources:
+  Resources:
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        EnableDnsSupport: 'true'
+        EnableDnsHostnames: 'true'
+        CidrBlock: !Ref VpcCidrBlock
+        InstanceTenancy: 'default'
+        Tags:
+          - Key: Application
+            Value: !Ref 'AWS::StackId'
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+          - Key: Application
+            Value: !Ref 'AWS::StackName'
+          - Key: Network
+            Value: Public
+    GatewayToInternet:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        VpcId: !Ref VPC
+        InternetGatewayId: !Ref InternetGateway
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    PublicSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: !Ref PublicSubnet1CidrBlock
+        AvailabilityZone: {'Fn::Select': [0, {'Fn::GetAZs': ''}]}
+        MapPublicIpOnLaunch: true
+    PublicSubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: !Ref PublicSubnet2CidrBlock
+        AvailabilityZone: {'Fn::Select': [1, {'Fn::GetAZs': ''}]}
+        MapPublicIpOnLaunch: true
+    PublicRouteTablePublicSubnet1Assoc:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        SubnetId: !Ref PublicSubnet1
+    PublicRouteTablePublicSubnet2Assoc:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        SubnetId: !Ref PublicSubnet2
+    InternetGatewayRoute1:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: 0.0.0.0/0
+        RouteTableId: !Ref PublicRouteTable
+        GatewayId: !Ref InternetGateway
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref VPC
+    PrivateSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: !Ref PrivateSubnet1CidrBlock
+        AvailabilityZone: {'Fn::Select': [0, {'Fn::GetAZs': ''}]}
+    PrivateSubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref VPC
+        CidrBlock: !Ref PrivateSubnet2CidrBlock
+        AvailabilityZone: {'Fn::Select': [1, {'Fn::GetAZs': ''}]}
+    PrivateRouteTablePrivateSubnet1Assoc:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        SubnetId: !Ref PrivateSubnet1
+    PrivateRouteTablePrivateSubnet2Assoc:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable
+        SubnetId: !Ref PrivateSubnet2
+    NatGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt NatGatewayEIP.AllocationId
+        SubnetId: !Ref PublicSubnet1
+    NatGatewayEIP:
+      Type: AWS::EC2::EIP
+      Properties: {}
+    NatGatewayRoute1:
+      Type: AWS::EC2::Route
+      Properties:
+        DestinationCidrBlock: 0.0.0.0/0
+        RouteTableId: !Ref PrivateRouteTable
+        NatGatewayId: !Ref NatGateway
+        Vpc: !Ref VPC
+  Parameters:
+    VpcCidrBlock:
+      Type: String
+      Default: 10.0.0.0/16
+    PublicSubnet1CidrBlock:
+      Type: String
+      Default: 10.0.1.0/24
+    PublicSubnet2CidrBlock:
+      Type: String
+      Default: 10.0.2.0/24
+    PrivateSubnet1CidrBlock:
+      Type: String
+      Default: 10.0.3.0/24
+    PrivateSubnet2CidrBlock:
+      Type: String
+      Default: 10.0.4.0/24
+  Outputs:
+    VpcId:
+      Value: !Ref VPC
+    VpcCidrBlock:
+      Value: !Ref VpcCidrBlock
+    PublicSubnet1:
+      Value: !Ref PublicSubnet1
+    PublicSubnet2:
+      Value: !Ref PublicSubnet2
+    PrivateSubnet1:
+      Value: !Ref PrivateSubnet1
+    PrivateSubnet2:
+      Value: !Ref PrivateSubnet2
